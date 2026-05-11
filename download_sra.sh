@@ -3,20 +3,21 @@
 # download_sra.sh — ENA FASTQ Downloader
 #
 # Usage:
-#   bash download_sra.sh <ACCESSION> [OPTIONS]
+#   bash download_sra.sh <ACCESSION> [OUTPUT_DIR] [OPTIONS]
 #
-#   ACCESSION  PRJNA/PRJEB/PRJDB... (project) or SRR/ERR/DRR... (run)
+#   ACCESSION   PRJNA/PRJEB/PRJDB... (project) or SRR/ERR/DRR... (run)
+#   OUTPUT_DIR  Download directory (default: current directory)
 #
 # Options:
-#   --output-dir DIR    Output directory (default: ./output)
 #   --show-progress     Show wget progress bar (auto-detected if TTY)
 #   --background         Launch in screen session, named after ACCESSION
 #   -h, --help          Show this help
 #
 # Examples:
-#   bash download_sra.sh PRJNA1074950 --output-dir /mnt/hdd2/metagenome
-#   bash download_sra.sh SRR11066123 --output-dir ./data --show-progress
-#   bash download_sra.sh PRJNA1074950 --output-dir /mnt/hdd2/metagenome --background
+#   bash download_sra.sh PRJNA1074950 /mnt/hdd2/metagenome
+#   bash download_sra.sh SRR11066123 /home/user/data
+#   bash download_sra.sh PRJNA1074950 /mnt/hdd2/metagenome --background
+#   bash download_sra.sh PRJNA1074950  # defaults to current directory
 # ============================================================
 
 set -u
@@ -269,17 +270,16 @@ download_runs() {
 
 main() {
     # ---- parse args ----
+    # Positional:  $1=ACCESSION  $2=OUTPUT_DIR (optional, defaults to .)
+    # Options:     --show-progress  --background  --help
     ACCESSION=""
-    OUTPUT_DIR="./output"
+    OUTPUT_DIR="."
     SHOW_PROGRESS=false
     BACKGROUND=false
+    local positional_count=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --output-dir)
-                OUTPUT_DIR="$2"
-                shift 2
-                ;;
             --show-progress)
                 SHOW_PROGRESS=true
                 shift
@@ -298,7 +298,13 @@ main() {
                 exit 1
                 ;;
             *)
-                ACCESSION="$1"
+                # First non-option arg = ACCESSION, second = OUTPUT_DIR
+                positional_count=$((positional_count + 1))
+                case $positional_count in
+                    1) ACCESSION="$1" ;;
+                    2) OUTPUT_DIR="$1" ;;
+                    *) echo "[ERROR] Unexpected extra argument: $1"; show_help; exit 1 ;;
+                esac
                 shift
                 ;;
         esac
@@ -345,9 +351,8 @@ main() {
         script_dir="$(cd "$(dirname "$0")" && pwd)"
         local script_path="${script_dir}/download_sra.sh"
 
-        # Reconstruct command from parsed variables (avoids $@ consumed issue)
-        local cmd="bash '${script_path}' '${ACCESSION}'"
-        cmd+=" --output-dir '${OUTPUT_DIR}'"
+        # Reconstruct command from parsed variables
+        local cmd="bash '${script_path}' '${ACCESSION}' '${OUTPUT_DIR}'"
         if [ "$SHOW_PROGRESS" = true ]; then
             cmd+=" --show-progress"
         fi
