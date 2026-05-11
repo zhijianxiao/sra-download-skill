@@ -1,161 +1,129 @@
 # ENA Metagenome Downloader
 
-通过 ENA Portal API 批量下载指定项目（PRJNA / PRJEB）下所有测序 run 的 FASTQ 文件，无需手动逐个查询和下载。
+通过 ENA Portal API 批量下载指定项目（PRJNA / PRJEB）或单个 Run（SRR / ERR / DRR）的 FASTQ 文件。
 
-## 功能特点
-
-- **项目级下载** — 输入 PRJNA 或 PRJEB 编号，自动拉取该项目的全部 run
-- **ENA API 查询** — 通过 ENA Portal API 获取每个 run 的 accession、FASTQ 下载地址和文库布局信息
-- **自动下载列表** — API 返回的原始 TSV 保存为项目下载清单，方便追溯
-- **Paired-end 支持** — 双端测序自动下载 Read 1 和 Read 2 两个文件
-- **断点续传** — `wget -c` 支持中断后恢复下载
-- **进度显示** — 终端实时显示每个文件的下载进度条
-- **结构化输出** — 每个项目独立目录，每个 run 独立子目录，清晰管理
-- **完整日志** — 输出同时写入日志文件，便于事后排查
-- **Screen 后台运行** — 通过 `run_in_screen.sh` 将下载任务放入后台 screen 会话，断连不中断
-
-## 环境要求
-
-| 依赖 | 说明 |
-| ---- | ---- |
-| `curl` | 查询 ENA API |
-| `wget` | 下载 FASTQ 文件（支持断点续传） |
-| `screen` | 后台运行（仅 `run_in_screen.sh` 需要） |
-| Bash | Linux / macOS / WSL |
-
-安装依赖：
-
-```bash
-# Ubuntu / Debian
-sudo apt install curl wget screen
-
-# macOS
-brew install curl wget screen
-```
-
-## 安装教程
+## 快速开始
 
 ```bash
 git clone https://github.com/zhijianxiao/sra-download-skill.git
 cd sra-download-skill
-chmod +x download_ena.sh run_in_screen.sh
+chmod +x download_sra.sh
+
+# 下载整个项目
+bash download_sra.sh PRJNA1074950 --output-dir /mnt/hdd2/cxj-download/metagenome
+
+# 下载单个 SRR
+bash download_sra.sh SRR11066123 --output-dir ./data
+
+# 后台运行（screen）
+bash download_sra.sh PRJNA1074950 --output-dir /mnt/hdd2/cxj-download/metagenome --background
+screen -r PRJNA1074950  # 查看进度
 ```
 
-## 使用方法
+---
 
-### 前台运行
+## download_sra.sh（推荐）
+
+统一的下载脚本，支持项目级和单 Run 级下载。
+
+### 用法
+
+```bash
+bash download_sra.sh <ACCESSION> [OPTIONS]
+```
+
+| 参数 | 说明 |
+|------|------|
+| `ACCESSION` | PRJNA / PRJEB（项目）或 SRR / ERR / DRR（单个 Run） |
+
+| 选项 | 说明 |
+|------|------|
+| `--output-dir DIR` | 下载目录（默认 `./output`） |
+| `--show-progress` | 强制显示 wget 进度条（终端下默认自动开启） |
+| `--background` | 在 screen 会话中后台运行，session 名 = ACCESSION |
+| `-h, --help` | 显示帮助 |
+
+### 功能特点
+
+- **项目 + 单 Run** — 自动识别输入类型，PRJNA 解析全部 SRR / ERR
+- **ENA 直链下载** — 无需 SRA Toolkit，直接下载 `.fastq.gz`
+- **断点续传** — `wget -c` 支持中断恢复，已存在文件自动跳过
+- **自动重试** — 下载失败自动重试 3 次，间隔 5 秒
+- **实时进度** — 终端显示 wget 进度条（文件名、大小、速度、ETA）
+- **日志记录** — 每个项目目录下生成 `download.log`，记录开始/结束时间、每个 SRR 状态、文件大小、错误信息
+- **Screen 后台运行** — `--background` 一键启动后台下载，断连不中断
+- **自动创建目录** — `mkdir -p` 自动创建输出目录和项目子目录
+
+### 输出结构
+
+```
+<output-dir>/
+└── PRJNA1074950/
+    ├── SRR11066123_1.fastq.gz
+    ├── SRR11066123_2.fastq.gz
+    ├── SRR11066124.fastq.gz
+    └── download.log
+```
+
+- 文件直接存放在项目目录下，无嵌套子目录
+- 仅保留 `.fastq.gz` 文件和 `download.log`，不保留中间文件
+
+### 日志格式
+
+```log
+============================================================
+Download Started:  2026-05-11 14:30:00
+Accession:         PRJNA1074950
+Accession Type:    project
+Output Directory:  /mnt/hdd2/cxj-download/metagenome/PRJNA1074950
+============================================================
+
+[1/2] SRR11066123 (PAIRED) — START
+  [OK] SRR11066123_1.fastq.gz — 2.3GB (00:05:21)
+  [OK] SRR11066123_2.fastq.gz — 2.1GB (00:04:58)
+[1/2] SRR11066123 — DONE (00:10:19)
+
+============================================================
+Download Finished: 2026-05-11 14:40:19
+Elapsed:           00:10:19
+Success:           2/2
+============================================================
+```
+
+### 环境要求
+
+| 依赖 | 说明 |
+|------|------|
+| `curl` | 查询 ENA API |
+| `wget` | 下载 FASTQ 文件（支持断点续传和进度条） |
+| `screen` | 后台运行（仅 `--background` 时需要） |
+| Bash 4.0+ | Linux / WSL |
+
+```bash
+# Ubuntu / Debian
+sudo apt install curl wget screen
+```
+
+---
+
+## download_ena.sh（旧版，保留兼容）
+
+仅支持项目级下载，输出目录硬编码为 `/mnt/hdd2/cxj-download/metagenome`。
 
 ```bash
 bash download_ena.sh <PROJECT_ID>
 ```
 
-### Screen 后台运行
+## run_in_screen.sh（旧版，保留兼容）
 
 ```bash
 bash run_in_screen.sh <ACCESSION>
 ```
 
-适合长时间下载或 SSH 连接不稳定的场景。`run_in_screen.sh` 自动完成：
-
-1. 检测 `screen` 是否安装
-2. 创建名为 accession 的 screen 会话
-3. 后台调用 `download_ena.sh`
-4. 打印 `screen -r` 恢复命令
-
-常用命令：
+常用 screen 命令：
 
 ```bash
-screen -r PRJNA210709    # 恢复会话，查看实时进度
-screen -list             # 列出所有会话
-screen -S PRJNA210709 -X quit  # 手动终止
-```
-
-| 参数 | 说明 | 示例 |
-| ---- | ---- | ---- |
-| `PROJECT_ID` | NCBI / ENA 项目编号 | `PRJNA210709`、`PRJEB12345` |
-
-### 执行流程
-
-1. 调用 ENA Portal API 查询项目下所有 run
-2. 保存 TSV 下载清单到项目目录
-3. 逐 run 解析 FASTQ 下载地址
-4. `wget` 下载 `.fastq.gz` 文件并显示进度
-5. 输出运行摘要（成功 / 失败数）
-
-## 输出结果说明
-
-```
-/mnt/hdd2/cxj-download/metagenome/
-└── <PROJECT_ID>/
-    ├── <PROJECT_ID>.download_list.tsv   # API 原始下载清单
-    ├── logs/
-    │   └── download.log                 # 完整运行日志
-    ├── SRR11066123/                     # Run 子目录
-    │   ├── SRR11066123_1.fastq.gz       # Paired-end Read 1
-    │   └── SRR11066123_2.fastq.gz       # Paired-end Read 2
-    └── SRR11066124/                     # Single-end 示例
-        └── SRR11066124.fastq.gz
-```
-
-- **Paired-end**：每个 run 目录下包含 `_1.fastq.gz` 和 `_2.fastq.gz` 两个文件
-- **Single-end**：每个 run 目录下包含一个 `.fastq.gz` 文件
-
-## 示例运行
-
-### 前台
-
-```bash
-$ bash download_ena.sh PRJNA210709
-
-[INFO] Project:     PRJNA210709
-[INFO] Output:      /mnt/hdd2/cxj-download/metagenome/PRJNA210709
-[INFO] Timestamp:   2026-05-11 14:30:00
-[INFO] Querying ENA API...
-[INFO] Download list → .../PRJNA210709.download_list.tsv
-[INFO] Total runs:   2
-
-============================================================
-[1/2] SRR11066123  (PAIRED)
-============================================================
-[DOWNLOAD] SRR11066123_1.fastq.gz
-  URL:  ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR110/023/...
-  →     .../SRR11066123/SRR11066123_1.fastq.gz
-  [OK]
-
-[DOWNLOAD] SRR11066123_2.fastq.gz
-  URL:  ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR110/023/...
-  →     .../SRR11066123/SRR11066123_2.fastq.gz
-  [OK]
-
-============================================================
-[2/2] SRR11066124  (SINGLE)
-============================================================
-[DOWNLOAD] SRR11066124.fastq.gz
-  URL:  ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR110/024/...
-  →     .../SRR11066124/SRR11066124.fastq.gz
-  [OK]
-
-============================================================
-[INFO] All done — 2026-05-11 14:35:00
-  Success: 2/2
-  Output:  /mnt/hdd2/cxj-download/metagenome/PRJNA210709
-  Log:     .../logs/download.log
-  List:    .../PRJNA210709.download_list.tsv
-============================================================
-```
-
-### Screen 后台
-
-```bash
-$ bash run_in_screen.sh PRJNA210709
-
-[INFO] Launching screen session: PRJNA210709
-[INFO] Script:  /path/to/download_ena.sh PRJNA210709
-[OK] Screen session 'PRJNA210709' is running.
-
-  Reattach:  screen -r PRJNA210709
-  List:      screen -list
-  Kill:      screen -S PRJNA210709 -X quit
-
-$ screen -r PRJNA210709    # 恢复查看下载进度
+screen -r PRJNA210709         # 恢复会话，查看实时进度
+screen -list                  # 列出所有会话
+screen -S PRJNA210709 -X quit # 手动终止
 ```
