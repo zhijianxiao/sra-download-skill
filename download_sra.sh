@@ -7,8 +7,9 @@ if [ -z "${SRR_ID}" ]; then
     exit 1
 fi
 
-OUTDIR="output/${SRR_ID}"
-LOGDIR="logs"
+BASE_DIR="/mnt/hdd2/cxj-download/metagenome"
+OUTDIR="${BASE_DIR}/${SRR_ID}"
+LOGDIR="${BASE_DIR}/logs"
 mkdir -p "${OUTDIR}" "${LOGDIR}"
 
 exec > >(tee -a "${LOGDIR}/${SRR_ID}.log") 2>&1
@@ -26,5 +27,5 @@ gzip "${OUTDIR}"/*.fastq
 echo "[INFO] Compression completed"
 
 echo "[INFO] All steps completed successfully"
-echo "FASTQ files: $(pwd)/${OUTDIR}"
-echo "Log file:    $(pwd)/${LOGDIR}/${SRR_ID}.log"
+echo "Output:  ${OUTDIR}"
+echo "Log:     ${LOGDIR}/${SRR_ID}.log"
