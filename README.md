@@ -10,16 +10,16 @@ cd sra-download-skill
 chmod +x download_sra.sh
 
 # 下载整个项目（指定目录）
-bash download_sra.sh PRJNA1074950 /mnt/hdd2/cxj-download/metagenome
+bash download_sra.sh PRJNA1074950 /home/user/downloads
 
 # 下载单个 SRR（指定目录）
 bash download_sra.sh SRR11066123 /home/user/data
 
-# 默认当前目录
+# 默认当前目录（不指定 OUTPUT_DIR）
 bash download_sra.sh PRJNA1074950
 
 # 后台运行（screen）
-bash download_sra.sh PRJNA1074950 /mnt/hdd2/cxj-download/metagenome --background
+bash download_sra.sh PRJNA1074950 /home/user/downloads --background
 screen -r PRJNA1074950  # 查看进度
 ```
 
@@ -78,7 +78,7 @@ bash download_sra.sh <ACCESSION> [OUTPUT_DIR] [OPTIONS]
 Download Started:  2026-05-11 14:30:00
 Accession:         PRJNA1074950
 Accession Type:    project
-Output Directory:  /mnt/hdd2/cxj-download/metagenome/PRJNA1074950
+Output Directory:  /home/user/downloads/PRJNA1074950
 ============================================================
 
 [1/2] SRR11066123 (PAIRED) — START
