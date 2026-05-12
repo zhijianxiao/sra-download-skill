@@ -15,13 +15,17 @@
 # Options:
 #   --file FILE          Read accessions from local txt file (one per line)
 #   --foreground         Run in foreground (no screen session)
+#   --report             Generate summary report after download
+#   --annotation         Run annotation analysis after download (fastqc, seqkit)
+#   --annotation-db PATH Kraken2 database path (requires --annotation)
 #   --show-progress      Force wget progress bar (auto-detected if TTY)
 #   -h, --help           Show this help
 #
 # Examples:
 #   bash download_sra.sh PRJNA1074950 /home/user/downloads
 #   bash download_sra.sh SRR11066123
-#   bash download_sra.sh --file my_accessions.txt /home/user/data
+#   bash download_sra.sh PRJNA1074950 --report --annotation
+#   bash download_sra.sh --file my_accessions.txt /home/user/data --report
 #   bash download_sra.sh PRJNA1074950 --foreground
 # ============================================================
 
@@ -269,6 +273,159 @@ download_runs() {
     DOWNLOAD_TOTAL=$total_runs
 }
 
+# ---- generate summary report ----
+generate_report() {
+    local project_dir=$1
+    local log_file=$2
+    local report_file="${project_dir}/download_report.txt"
+
+    echo_log ""
+    echo_log "============================================================"
+    echo_log "[REPORT] Generating summary report..."
+    echo_log "============================================================"
+
+    {
+        echo "============================================================"
+        echo "ENA Download Report"
+        echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Accession: ${ACCESSION}"
+        echo "Output:    ${project_dir}"
+        echo "============================================================"
+        echo ""
+
+        # Summary table header
+        printf "%-20s %-8s %7s  %s\n" "run_accession" "status" "size" "duration"
+        printf "%-20s %-8s %7s  %s\n" "--------------------" "--------" "-------" "--------"
+
+        # Parse log for per-run info
+        local total_size=0 total_files=0 ok_files=0
+        local current_run="" current_status=""
+        local run_size=0
+
+        while IFS= read -r line; do
+            # Match [N/M] RUN_ACC (LAYOUT)
+            if [[ "$line" =~ \[.*\]\ (.+)\ +\(.+\)$ ]]; then
+                # Flush previous run
+                if [ -n "$current_run" ]; then
+                    printf "%-20s %-8s %7s  %s\n" "$current_run" "$current_status" "$(human_size $run_size)" ""
+                fi
+                current_run="${BASH_REMATCH[1]}"
+                current_status=""
+                run_size=0
+            fi
+            # Match [OK] filename — SIZE (DURATION)
+            if [[ "$line" =~ \[OK\]\ (.+)\ —\ (.+)\ \((.+)\) ]]; then
+                local ok_size="${BASH_REMATCH[2]}"
+                current_status="OK"
+                ok_files=$((ok_files + 1))
+            fi
+            # Match [FAIL] filename
+            if [[ "$line" =~ \[FAIL\]\ (.+) ]]; then
+                current_status="FAIL"
+            fi
+            # Match DONE
+            if [[ "$line" =~ DONE\ \((.+)\)$ ]]; then
+                current_status="${current_status:-OK}"
+            fi
+        done < "$log_file"
+
+        # Flush last run
+        if [ -n "$current_run" ]; then
+            printf "%-20s %-8s %7s  %s\n" "$current_run" "$current_status" "" ""
+        fi
+
+        echo ""
+        echo "---"
+        echo ""
+
+        # Per-file listing
+        echo "Files:"
+        while IFS= read -r -d '' f; do
+            local sz
+            sz=$(file_size "$f")
+            total_size=$((total_size + sz))
+            total_files=$((total_files + 1))
+            printf "  %s  %s\n" "$(human_size "$sz")" "$(basename "$f")"
+        done < <(find "$project_dir" -maxdepth 1 -name "*.fastq.gz" -print0 2>/dev/null)
+
+        echo ""
+        echo "---"
+        echo ""
+        echo "Total files: $total_files"
+        echo "Total size:  $(human_size $total_size)"
+        echo ""
+        echo "============================================================"
+    } > "$report_file"
+
+    echo_log "[REPORT] Report saved to: ${report_file}"
+    cat "$report_file" | tee -a "$LOG_FILE"
+}
+
+# ---- run annotation analysis ----
+run_annotation() {
+    local project_dir=$1
+    local annot_dir="${project_dir}/annotation"
+    mkdir -p "$annot_dir"
+
+    echo_log ""
+    echo_log "============================================================"
+    echo_log "[ANNOTATION] Starting annotation analysis..."
+    echo_log "============================================================"
+
+    # Find all .fastq.gz files
+    local fastq_files=()
+    while IFS= read -r -d '' f; do
+        fastq_files+=("$f")
+    done < <(find "$project_dir" -maxdepth 1 -name "*.fastq.gz" -print0 2>/dev/null)
+
+    if [ ${#fastq_files[@]} -eq 0 ]; then
+        echo_log "[ANNOTATION] No FASTQ files found, skipping"
+        return
+    fi
+
+    echo_log "[ANNOTATION] Found ${#fastq_files[@]} FASTQ file(s)"
+
+    # ---- FastQC ----
+    if command -v fastqc &>/dev/null; then
+        echo_log "[ANNOTATION] Running FastQC..."
+        mkdir -p "${annot_dir}/fastqc"
+        fastqc -o "${annot_dir}/fastqc" -t 4 --nogroup "${fastq_files[@]}" 2>&1 | tee -a "$LOG_FILE"
+        echo_log "[ANNOTATION] FastQC done → ${annot_dir}/fastqc/"
+    else
+        echo_log "[ANNOTATION] FastQC not installed, skipping (install: conda install fastqc)"
+    fi
+
+    # ---- seqkit stats ----
+    if command -v seqkit &>/dev/null; then
+        echo_log "[ANNOTATION] Running seqkit stats..."
+        seqkit stats -a -T "${fastq_files[@]}" > "${annot_dir}/seqkit_stats.txt" 2>&1
+        echo_log "[ANNOTATION] seqkit done → ${annot_dir}/seqkit_stats.txt"
+        cat "${annot_dir}/seqkit_stats.txt" | tee -a "$LOG_FILE"
+    else
+        echo_log "[ANNOTATION] seqkit not installed, skipping (install: conda install seqkit)"
+    fi
+
+    # ---- Kraken2 ----
+    if command -v kraken2 &>/dev/null && [ -n "${KRAKEN2_DB:-}" ] && [ -d "${KRAKEN2_DB}" ]; then
+        echo_log "[ANNOTATION] Running Kraken2 (db: ${KRAKEN2_DB})..."
+        mkdir -p "${annot_dir}/kraken2"
+        for f in "${fastq_files[@]}"; do
+            local base
+            base=$(basename "$f" .fastq.gz)
+            echo_log "  [KRAKEN2] ${base}..."
+            kraken2 --db "$KRAKEN2_DB" --threads 4 --report "${annot_dir}/kraken2/${base}.report" \
+                --output "${annot_dir}/kraken2/${base}.kraken" "$f" 2>&1 | tee -a "$LOG_FILE"
+        done
+        echo_log "[ANNOTATION] Kraken2 done → ${annot_dir}/kraken2/"
+    elif [ -n "${KRAKEN2_DB:-}" ] && ! command -v kraken2 &>/dev/null; then
+        echo_log "[ANNOTATION] Kraken2 not installed, skipping (install: conda install kraken2)"
+    elif [ -n "${KRAKEN2_DB:-}" ] && [ ! -d "${KRAKEN2_DB}" ]; then
+        echo_log "[ANNOTATION] Kraken2 database not found: ${KRAKEN2_DB}"
+    fi
+
+    echo_log "[ANNOTATION] Annotation complete → ${annot_dir}"
+}
+
 # ============================================================
 # main
 # ============================================================
@@ -276,12 +433,15 @@ download_runs() {
 main() {
     # ---- parse args ----
     # Positional:  $1=ACCESSION  $2=OUTPUT_DIR (optional, defaults to .)
-    # Options:     --file  --foreground  --show-progress  --help
+    # Options:     --file  --foreground  --report  --annotation  --annotation-db  --show-progress  --help
     ACCESSION=""
     OUTPUT_DIR="."
     SHOW_PROGRESS=false
     FOREGROUND=false
     BATCH_FILE=""
+    DO_REPORT=false
+    DO_ANNOTATION=false
+    KRAKEN2_DB=""
     local positional_count=0
 
     while [ $# -gt 0 ]; do
@@ -297,6 +457,23 @@ main() {
             --foreground)
                 FOREGROUND=true
                 shift
+                ;;
+            --report)
+                DO_REPORT=true
+                shift
+                ;;
+            --annotation)
+                DO_ANNOTATION=true
+                shift
+                ;;
+            --annotation-db)
+                if [ -z "${2:-}" ]; then
+                    echo "[ERROR] --annotation-db requires a path"
+                    exit 1
+                fi
+                KRAKEN2_DB="$2"
+                DO_ANNOTATION=true
+                shift 2
                 ;;
             --show-progress)
                 SHOW_PROGRESS=true
@@ -367,6 +544,23 @@ main() {
         SCREEN_NAME="${SCREEN_NAME//,/_}"
     fi
 
+    # ---- interactive prompt (if no --report / --annotation and TTY available) ----
+    if [ "$DO_REPORT" = false ] && [ "$DO_ANNOTATION" = false ] && [ -t 0 ]; then
+        echo ""
+        echo "============================================================"
+        echo " Post-download options (press Enter to skip):"
+        echo "============================================================"
+        read -r -p "  Generate summary report after download?  (y/N): " REPLY
+        case "${REPLY:-}" in
+            [Yy]|[Yy][Ee][Ss]) DO_REPORT=true ;;
+        esac
+        read -r -p "  Run annotation analysis after download? (y/N): " REPLY
+        case "${REPLY:-}" in
+            [Yy]|[Yy][Ee][Ss]) DO_ANNOTATION=true ;;
+        esac
+        echo ""
+    fi
+
     # ---- detect accession type ----
     # For batch mode, check the first accession
     local first_acc
@@ -427,6 +621,15 @@ main() {
         cmd+=" '${OUTPUT_DIR}'"
         if [ "$SHOW_PROGRESS" = true ]; then
             cmd+=" --show-progress"
+        fi
+        if [ "$DO_REPORT" = true ]; then
+            cmd+=" --report"
+        fi
+        if [ "$DO_ANNOTATION" = true ]; then
+            cmd+=" --annotation"
+        fi
+        if [ -n "$KRAKEN2_DB" ]; then
+            cmd+=" --annotation-db '${KRAKEN2_DB}'"
         fi
         cmd+=" --foreground"
 
@@ -516,6 +719,16 @@ main() {
         echo "Log:               ${LOG_FILE}"
         echo "============================================================"
     } | tee -a "$LOG_FILE"
+
+    # ---- post-download: report ----
+    if [ "$DO_REPORT" = true ]; then
+        generate_report "$PROJECT_DIR" "$LOG_FILE"
+    fi
+
+    # ---- post-download: annotation ----
+    if [ "$DO_ANNOTATION" = true ]; then
+        run_annotation "$PROJECT_DIR"
+    fi
 }
 
 # ---- entry point ----
